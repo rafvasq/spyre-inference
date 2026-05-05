@@ -1,5 +1,8 @@
 # spyre-inference
 
+!!! info "Legacy SenDNN Inference Documentation"
+    Looking for the legacy SenDNN Inference plugin documentation? [View legacy docs here](legacy/README.md).
+
 ## Overview
 
 The `spyre-inference` plugin represents the next iteration of sendnn-inference, built on the `torch-spyre` stack. This plugin integrates with `torch-spyre` to leverage the PyTorch Inductor backend for model compilation, providing enhanced performance and optimization capabilities for large language model inference.

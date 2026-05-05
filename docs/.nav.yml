@@ -1,0 +1,33 @@
+nav:
+  - Home:
+    - Spyre Inference Plugin: README.md
+    - Getting Started:
+      - Installation: getting_started/installation.md
+    - Developer Guide:
+      - Contributing: contributing/README.md
+  
+  - Legacy (SenDNN):
+    - Home: legacy/README.md
+    - Roadmap: legacy/roadmaps/q3-2025.md
+    - Getting Started:
+      - Installation: legacy/getting_started/installation.md
+    - Deploying:
+      - Docker: legacy/deploying/docker.md
+      - Kubernetes: legacy/deploying/k8s.md
+      - Red Hat OpenShift AI: legacy/deploying/rhoai.md
+    - Examples:
+      - Offline Inference: legacy/examples/offline_inference
+      - Online Inference: legacy/examples/online_inference
+    - User Guide:
+      - Configuration: legacy/user_guide/configuration.md
+      - Environment Variables: legacy/user_guide/env_vars.md
+      - Supported Features: legacy/user_guide/supported_features.md
+      - Supported Models: legacy/user_guide/supported_models.md
+    - Developer Guide:
+      - Contributing: legacy/contributing/README.md
+      - Maintaining: legacy/contributing/maintaining.md
+      - Architecture: legacy/contributing/architecture.md
+      - MultiModal:
+        - Adding New Models: legacy/contributing/multimodal/adding_new_models.md
+
+# Made with Bob
