@@ -32,13 +32,13 @@ The `pyproject.toml` includes several key build configurations:
 
 ```toml
 [tool.uv]
-build-constraint-dependencies = ["torch==2.10.0"]
+build-constraint-dependencies = ["torch==2.11.0"]
 extra-build-variables = { vllm = { VLLM_TARGET_DEVICE = "cpu" } }
 ```
 
 These settings ensure:
 
-- All packages are built with the same PyTorch version (2.10.0)
+- All packages are built with the same PyTorch version (2.11.0)
 - vLLM is built specifically for the CPU backend
 
 ### Source Repositories
