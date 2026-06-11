@@ -343,11 +343,12 @@ class SpyreAttentionMetadataBuilder(AttentionMetadataBuilder[SpyreAttentionMetad
         self.head_size = kv_cache_spec.head_size
 
         # Validate block_size alignment: Spyre stick size is 128 bytes (64 fp16 elements).
-        # block_size must be a multiple of 64 to avoid restickification errors
+        # block_size must be a multiple of 64 to avoid restickification errors during
+        # torch.compile.
         if self.block_size % 64 != 0:
             raise ValueError(
-                f"block_size ({self.block_size}) must be a multiple of 64 for Spyre "
-                f"Got block_size={self.block_size}, head_size={self.head_size}."
+                f"block_size must be a multiple of 64 for the list-based attention "
+                f"backend. Got block_size={self.block_size}, head_size={self.head_size}. "
             )
 
         model_config = vllm_config.model_config

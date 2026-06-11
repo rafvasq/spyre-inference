@@ -74,6 +74,8 @@ tests:
     - rel_path: tests/v1/attention/test_attention_backends.py
       allow_list:
         - test: "test_causal_backend_correctness"
+          # Xfailed because the list-based backend requires block_size % 64 == 0
+          # for Spyre stick alignment. The test uses block_size=16.
           mode: xfail
           tags: [attention, upstream]
           params:
