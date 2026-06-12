@@ -14,7 +14,6 @@
 
 """Unit tests for platform.py configuration logic."""
 
-import pytest
 import torch
 
 from vllm.config import VllmConfig, ModelConfig, CacheConfig
