@@ -61,7 +61,6 @@ def test_spyre_llama3_rotary_matches_reference(default_vllm_config):
     torch.manual_seed(42)
 
     head_size = 128
-    rotary_dim = 128
     max_position = 2048
     num_tokens = 32
     num_heads = 4
@@ -93,12 +92,8 @@ def test_spyre_llama3_rotary_matches_reference(default_vllm_config):
         rope, cpu_positions, cpu_query, cpu_key
     )
 
-    torch.testing.assert_close(
-        actual_query.float(), expected_query.float(), atol=1e-2, rtol=1e-2
-    )
-    torch.testing.assert_close(
-        actual_key.float(), expected_key.float(), atol=1e-2, rtol=1e-2
-    )
+    torch.testing.assert_close(actual_query.float(), expected_query.float(), atol=1e-2, rtol=1e-2)
+    torch.testing.assert_close(actual_key.float(), expected_key.float(), atol=1e-2, rtol=1e-2)
 
 
 @pytest.mark.rotary
@@ -131,7 +126,6 @@ def test_spyre_base_rotary_matches_reference(default_vllm_config):
     torch.manual_seed(42)
 
     head_size = 128
-    rotary_dim = 128
     max_position = 2048
     num_tokens = 32
     num_heads = 4
@@ -156,9 +150,5 @@ def test_spyre_base_rotary_matches_reference(default_vllm_config):
         rope, cpu_positions, cpu_query, cpu_key
     )
 
-    torch.testing.assert_close(
-        actual_query.float(), expected_query.float(), atol=1e-2, rtol=1e-2
-    )
-    torch.testing.assert_close(
-        actual_key.float(), expected_key.float(), atol=1e-2, rtol=1e-2
-    )
+    torch.testing.assert_close(actual_query.float(), expected_query.float(), atol=1e-2, rtol=1e-2)
+    torch.testing.assert_close(actual_key.float(), expected_key.float(), atol=1e-2, rtol=1e-2)
