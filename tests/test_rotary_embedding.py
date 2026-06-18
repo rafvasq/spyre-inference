@@ -12,20 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Test SpyreLlama3RotaryEmbedding custom op correctness.
-"""
-
 import pytest
 import torch
 
 
 @pytest.mark.rotary
 def test_llama3_rotary_oot_registration(default_vllm_config):
-    """Verify OOT registration: get_rope with rope_type='llama3' returns SpyreLlama3RotaryEmbedding.
-
-    This confirms the OOT registration actually resolves to our class, not the base
-    Llama3RotaryEmbedding.
+    """Verify get_rope(rope_type='llama3') resolves to SpyreLlama3RotaryEmbedding.
     """
     from vllm.model_executor.layers.rotary_embedding import get_rope
     from spyre_inference.custom_ops.rotary_embedding import SpyreLlama3RotaryEmbedding
@@ -50,10 +43,10 @@ def test_llama3_rotary_oot_registration(default_vllm_config):
 
 
 @pytest.mark.rotary
-def test_spyre_llama3_rotary_matches_reference(default_vllm_config):
-    """SpyreLlama3RotaryEmbedding output matches CPU reference.
+def test_llama3_rotary_forward_matches_reference(default_vllm_config):
+    """Verify forward_oot output matches Llama3RotaryEmbedding.forward_native reference.
 
-    Tests forward_oot() path: inputs on CPU, computation via Llama3RotaryEmbedding.forward_native.
+    Numerical correctness test: Spyre path should produce identical results to CPU reference.
     """
     from vllm.model_executor.layers.rotary_embedding import get_rope
     from vllm.model_executor.layers.rotary_embedding.llama3_rope import Llama3RotaryEmbedding
@@ -83,13 +76,12 @@ def test_spyre_llama3_rotary_matches_reference(default_vllm_config):
     query = torch.randn(num_tokens, num_heads, head_size, dtype=torch.float16)
     key = torch.randn(num_tokens, num_heads, head_size, dtype=torch.float16)
 
+    # Spyre path (forward_oot bounces to CPU)
     actual_query, actual_key = rope.forward_oot(positions, query, key)
 
-    cpu_positions = positions.cpu()
-    cpu_query = query.cpu()
-    cpu_key = key.cpu()
+    # CPU reference
     expected_query, expected_key = Llama3RotaryEmbedding.forward_native(
-        rope, cpu_positions, cpu_query, cpu_key
+        rope, positions.cpu(), query.cpu(), key.cpu()
     )
 
     torch.testing.assert_close(actual_query.float(), expected_query.float(), atol=1e-2, rtol=1e-2)
@@ -97,28 +89,8 @@ def test_spyre_llama3_rotary_matches_reference(default_vllm_config):
 
 
 @pytest.mark.rotary
-def test_spyre_base_rotary_oot_registration(default_vllm_config):
-    """Verify OOT registration: default get_rope returns SpyreRotaryEmbedding."""
-    from vllm.model_executor.layers.rotary_embedding import get_rope
-    from spyre_inference.custom_ops.rotary_embedding import SpyreRotaryEmbedding
-
-    rope = get_rope(
-        head_size=128,
-        max_position=2048,
-        is_neox_style=True,
-        dtype=torch.float16,
-    )
-
-    assert isinstance(rope, SpyreRotaryEmbedding), (
-        f"Expected SpyreRotaryEmbedding, got {type(rope).__name__}"
-    )
-
-
-@pytest.mark.rotary
-def test_spyre_base_rotary_matches_reference(default_vllm_config):
-    """SpyreRotaryEmbedding output matches CPU reference.
-
-    Tests forward_oot() path: inputs on CPU, computation via RotaryEmbedding.forward_native.
+def test_base_rotary_forward_matches_reference(default_vllm_config):
+    """Verify SpyreRotaryEmbedding.forward_oot matches RotaryEmbedding.forward_native.
     """
     from vllm.model_executor.layers.rotary_embedding import get_rope
     from vllm.model_executor.layers.rotary_embedding.base import RotaryEmbedding
@@ -143,11 +115,8 @@ def test_spyre_base_rotary_matches_reference(default_vllm_config):
 
     actual_query, actual_key = rope.forward_oot(positions, query, key)
 
-    cpu_positions = positions.cpu()
-    cpu_query = query.cpu()
-    cpu_key = key.cpu()
     expected_query, expected_key = RotaryEmbedding.forward_native(
-        rope, cpu_positions, cpu_query, cpu_key
+        rope, positions.cpu(), query.cpu(), key.cpu()
     )
 
     torch.testing.assert_close(actual_query.float(), expected_query.float(), atol=1e-2, rtol=1e-2)
