@@ -78,8 +78,8 @@ class SpyreRotaryEmbedding(RotaryEmbedding):
 
 @RotaryEmbeddingBase.register_oot(name="Llama3RotaryEmbedding")
 class SpyreLlama3RotaryEmbedding(Llama3RotaryEmbedding, SpyreRotaryEmbedding):
-    """OOT Llama3RotaryEmbedding that runs rotary computation on CPU.
-    """
+    """OOT Llama3RotaryEmbedding that runs rotary computation on CPU."""
+
     pass
 
 

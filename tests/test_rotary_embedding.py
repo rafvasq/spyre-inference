@@ -18,8 +18,7 @@ import torch
 
 @pytest.mark.rotary
 def test_llama3_rotary_oot_registration(default_vllm_config):
-    """Verify get_rope(rope_type='llama3') resolves to SpyreLlama3RotaryEmbedding.
-    """
+    """Verify get_rope(rope_type='llama3') resolves to SpyreLlama3RotaryEmbedding."""
     from vllm.model_executor.layers.rotary_embedding import get_rope
     from spyre_inference.custom_ops.rotary_embedding import SpyreLlama3RotaryEmbedding
 
@@ -90,8 +89,7 @@ def test_llama3_rotary_forward_matches_reference(default_vllm_config):
 
 @pytest.mark.rotary
 def test_base_rotary_forward_matches_reference(default_vllm_config):
-    """Verify SpyreRotaryEmbedding.forward_oot matches RotaryEmbedding.forward_native.
-    """
+    """Verify SpyreRotaryEmbedding.forward_oot matches RotaryEmbedding.forward_native."""
     from vllm.model_executor.layers.rotary_embedding import get_rope
     from vllm.model_executor.layers.rotary_embedding.base import RotaryEmbedding
 
