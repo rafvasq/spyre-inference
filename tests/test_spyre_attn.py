@@ -18,7 +18,7 @@ import pytest
 import torch
 
 from vllm.v1.attention.backend import CommonAttentionMetadata
-from vllm.v1.kv_cache_interface import AttentionSpec
+from vllm.v1.kv_cache_interface import AttentionSpec, FullAttentionSpec
 from vllm.utils.torch_utils import set_random_seed
 from spyre_inference.v1.attention.backends.spyre_attn import (
     SpyreAttentionImpl,
@@ -90,6 +90,7 @@ def _build_metadata(
     query_start_loc: torch.Tensor,
     block_table: torch.Tensor,
     slot_mapping: torch.Tensor,
+    sliding_window: int | None = None,
 ):
     """Use the real SpyreAttentionMetadataBuilder to construct metadata."""
     from vllm.config import get_current_vllm_config
@@ -100,12 +101,22 @@ def _build_metadata(
     vllm_config.model_config.get_num_attention_heads = Mock(return_value=num_query_heads)
     vllm_config.model_config.get_num_kv_heads = Mock(return_value=num_kv_heads)
 
-    kv_cache_spec = AttentionSpec(
-        block_size=block_size,
-        num_kv_heads=num_kv_heads,
-        head_size=head_size,
-        dtype=torch.float16,
-    )
+    if sliding_window is not None:
+        kv_cache_spec = FullAttentionSpec(
+            block_size=block_size,
+            num_kv_heads=num_kv_heads,
+            head_size=head_size,
+            head_size_v=head_size,
+            dtype=torch.float16,
+            sliding_window=sliding_window,
+        )
+    else:
+        kv_cache_spec = AttentionSpec(
+            block_size=block_size,
+            num_kv_heads=num_kv_heads,
+            head_size=head_size,
+            dtype=torch.float16,
+        )
 
     builder = SpyreAttentionMetadataBuilder(
         kv_cache_spec=kv_cache_spec,
@@ -319,7 +330,14 @@ def ref_attn(
         pytest.param(256, id="block_size(256)"),
     ],
 )
-@pytest.mark.parametrize("sliding_window", [None])
+@pytest.mark.parametrize(
+    "sliding_window",
+    [
+        pytest.param(None, id="swa_none"),
+        pytest.param(4, id="swa_4"),
+        pytest.param(16, id="swa_16"),
+    ],
+)
 @pytest.mark.parametrize(
     "dtype",
     [
@@ -428,6 +446,7 @@ def test_spyre_attn(
         query_start_loc=cu_query_lens,
         block_table=block_tables,
         slot_mapping=slot_mapping,
+        sliding_window=sliding_window,
     )
 
     attn_impl = SpyreAttentionImpl(
@@ -558,3 +577,198 @@ def test_block_size_validation():
             device=torch.device("cpu"),
         )
         assert builder.block_size == block_size
+
+
+def test_sliding_window_none_equivalence(default_vllm_config):
+    """Verify sliding_window=None produces identical results to full attention.
+
+    This is a regression test to ensure the sliding window code path doesn't
+    affect the standard full attention behavior.
+    """
+
+    torch.set_default_device("cpu")
+    set_random_seed(0)
+
+    num_query_heads, num_kv_heads = 32, 8
+    head_size = 128
+    block_size = 64
+    num_blocks = 256
+    dtype = torch.float16
+
+    # Single sequence: query_len=32, kv_len=256
+    query_len, kv_len = 32, 256
+
+    k_pages_cpu = [
+        torch.zeros(num_kv_heads, block_size, head_size, dtype=dtype) for _ in range(num_blocks)
+    ]
+    v_pages_cpu = [
+        torch.zeros(num_kv_heads, block_size, head_size, dtype=dtype) for _ in range(num_blocks)
+    ]
+
+    # Pre-populate KV cache
+    for i in range(kv_len):
+        block_idx = i // block_size
+        block_offset = i % block_size
+        k_pages_cpu[block_idx][:, block_offset, :] = torch.randn(
+            num_kv_heads, head_size, dtype=dtype
+        )
+        v_pages_cpu[block_idx][:, block_offset, :] = torch.randn(
+            num_kv_heads, head_size, dtype=dtype
+        )
+
+    cu_query_lens = torch.tensor([0, query_len], dtype=torch.int32)
+    kv_lens_tensor = torch.tensor([kv_len], dtype=torch.int32)
+    max_num_blocks = (kv_len + block_size - 1) // block_size
+    block_tables = torch.zeros((1, max_num_blocks), dtype=torch.int32)
+    block_tables[0, : (kv_len + block_size - 1) // block_size] = torch.arange(
+        (kv_len + block_size - 1) // block_size
+    )
+
+    slot_mapping = torch.arange(query_len, dtype=torch.int64) + (kv_len - query_len)
+
+    # Build metadata with sliding_window=None
+    metadata_none = _build_metadata(
+        num_query_heads=num_query_heads,
+        num_kv_heads=num_kv_heads,
+        head_size=head_size,
+        block_size=block_size,
+        seq_lens=kv_lens_tensor,
+        query_start_loc=cu_query_lens,
+        block_table=block_tables,
+        slot_mapping=slot_mapping,
+        sliding_window=None,
+    )
+
+    # Build metadata with sliding_window=256 (larger than seq_len, effectively None)
+    metadata_swa = _build_metadata(
+        num_query_heads=num_query_heads,
+        num_kv_heads=num_kv_heads,
+        head_size=head_size,
+        block_size=block_size,
+        seq_lens=kv_lens_tensor,
+        query_start_loc=cu_query_lens,
+        block_table=block_tables,
+        slot_mapping=slot_mapping,
+        sliding_window=256,
+    )
+
+    # Compare masks - they should be identical when window doesn't bind
+    mask_none = metadata_none.attention_mask_tiles[0][0]
+    mask_swa = metadata_swa.attention_mask_tiles[0][0]
+
+    assert torch.equal(mask_none, mask_swa), (
+        "Masks differ when sliding_window >= seq_len. "
+        f"Max diff: {(mask_none - mask_swa).abs().max().item()}"
+    )
+
+
+def test_sliding_window_boundary_conditions(default_vllm_config):
+    """Test sliding window at boundary conditions.
+
+    Tests:
+    - seq_len == sliding_window (window exactly fits)
+    - seq_len == sliding_window + 1 (one token beyond window)
+    - Mixed batch with different seq_lens
+    """
+
+    torch.set_default_device("cpu")
+    set_random_seed(0)
+
+    num_query_heads, num_kv_heads = 8, 2
+    head_size = 128
+    block_size = 64
+    sliding_window = 4
+
+    # Test 1: seq_len == sliding_window (exactly 4 tokens)
+    kv_len_eq = sliding_window
+    query_len_eq = 1  # decode step
+    context_len_eq = kv_len_eq - query_len_eq  # 3
+
+    seq_lens_eq = torch.tensor([kv_len_eq], dtype=torch.int32)
+    query_start_loc_eq = torch.tensor([0, query_len_eq], dtype=torch.int32)
+    block_tables_eq = torch.zeros((1, 1), dtype=torch.int32)
+    slot_mapping_eq = torch.tensor([context_len_eq], dtype=torch.int64)
+
+    metadata_eq = _build_metadata(
+        num_query_heads=num_query_heads,
+        num_kv_heads=num_kv_heads,
+        head_size=head_size,
+        block_size=block_size,
+        seq_lens=seq_lens_eq,
+        query_start_loc=query_start_loc_eq,
+        block_table=block_tables_eq,
+        slot_mapping=slot_mapping_eq,
+        sliding_window=sliding_window,
+    )
+
+    # Query at position 3 (absolute) should attend to [0, 1, 2, 3] - all 4 tokens
+    mask_eq = metadata_eq.attention_mask_tiles[0][0]
+    attended_eq = (mask_eq[0] == 0).nonzero().flatten().tolist()
+    assert attended_eq == [0, 1, 2, 3], f"Expected [0,1,2,3], got {attended_eq}"
+
+    # Test 2: seq_len == sliding_window + 1 (5 tokens, window binds)
+    kv_len_gt = sliding_window + 1
+    query_len_gt = 1  # decode step
+    context_len_gt = kv_len_gt - query_len_gt  # 4
+
+    seq_lens_gt = torch.tensor([kv_len_gt], dtype=torch.int32)
+    query_start_loc_gt = torch.tensor([0, query_len_gt], dtype=torch.int32)
+    block_tables_gt = torch.zeros((1, 1), dtype=torch.int32)
+    slot_mapping_gt = torch.tensor([context_len_gt], dtype=torch.int64)
+
+    metadata_gt = _build_metadata(
+        num_query_heads=num_query_heads,
+        num_kv_heads=num_kv_heads,
+        head_size=head_size,
+        block_size=block_size,
+        seq_lens=seq_lens_gt,
+        query_start_loc=query_start_loc_gt,
+        block_table=block_tables_gt,
+        slot_mapping=slot_mapping_gt,
+        sliding_window=sliding_window,
+    )
+
+    # Query at position 4 (absolute) should attend to [1, 2, 3, 4] - 4 tokens
+    mask_gt = metadata_gt.attention_mask_tiles[0][0]
+    attended_gt = (mask_gt[0] == 0).nonzero().flatten().tolist()
+    assert attended_gt == [1, 2, 3, 4], f"Expected [1,2,3,4], got {attended_gt}"
+
+    # Test 3: Mixed batch - one seq within window, one beyond
+    kv_len_mixed = [sliding_window, sliding_window + 5]  # [4, 9]
+    context_lens_mixed = [3, 8]
+
+    num_seqs_mixed = 2
+    seq_lens_mixed = torch.tensor(kv_len_mixed, dtype=torch.int32)
+    query_start_loc_mixed = torch.tensor([0, 1, 2], dtype=torch.int32)
+    max_blocks_mixed = (max(kv_len_mixed) + block_size - 1) // block_size
+    block_tables_mixed = torch.zeros((num_seqs_mixed, max_blocks_mixed), dtype=torch.int32)
+    for s in range(num_seqs_mixed):
+        block_tables_mixed[s, : (kv_len_mixed[s] + block_size - 1) // block_size] = torch.arange(
+            (kv_len_mixed[s] + block_size - 1) // block_size
+        )
+
+    slot_mapping_mixed = torch.tensor(
+        [context_lens_mixed[0], context_lens_mixed[1]], dtype=torch.int64
+    )
+
+    metadata_mixed = _build_metadata(
+        num_query_heads=num_query_heads,
+        num_kv_heads=num_kv_heads,
+        head_size=head_size,
+        block_size=block_size,
+        seq_lens=seq_lens_mixed,
+        query_start_loc=query_start_loc_mixed,
+        block_table=block_tables_mixed,
+        slot_mapping=slot_mapping_mixed,
+        sliding_window=sliding_window,
+    )
+
+    # Seq 0 (kv_len=4): query at position 3, attends to [0, 1, 2, 3]
+    mask_mixed_0 = metadata_mixed.attention_mask_tiles[0][0]
+    attended_mixed_0 = (mask_mixed_0[0] == 0).nonzero().flatten().tolist()
+    assert attended_mixed_0 == [0, 1, 2, 3], f"Seq 0: expected [0,1,2,3], got {attended_mixed_0}"
+
+    # Seq 1 (kv_len=9): query at position 8, attends to [5, 6, 7, 8]
+    mask_mixed_1 = metadata_mixed.attention_mask_tiles[1][0]
+    attended_mixed_1 = (mask_mixed_1[0] == 0).nonzero().flatten().tolist()
+    assert attended_mixed_1 == [5, 6, 7, 8], f"Seq 1: expected [5,6,7,8], got {attended_mixed_1}"
