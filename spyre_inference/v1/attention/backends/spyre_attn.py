@@ -374,7 +374,6 @@ class SpyreAttentionMetadataBuilder(AttentionMetadataBuilder[SpyreAttentionMetad
         super().__init__(kv_cache_spec, layer_names, vllm_config, device)
         self.block_size = kv_cache_spec.block_size
         self.head_size = kv_cache_spec.head_size
-        # Extract sliding_window from kv_cache_spec (FullAttentionSpec has this attribute)
         self.sliding_window = getattr(kv_cache_spec, "sliding_window", None)
         if self.sliding_window is not None and self.sliding_window <= 0:
             raise ValueError(f"sliding_window must be positive, got {self.sliding_window}")
@@ -452,7 +451,7 @@ class SpyreAttentionMetadataBuilder(AttentionMetadataBuilder[SpyreAttentionMetad
             )  # [num_seqs, max_query_len, aligned_max_seq_len]
             attend = attend & window_ok
 
-        # Convert to additive mask: -65504 for masked, 0 for valid (float16 min)
+        # Convert to additive mask: finfo.min for masked positions, 0 for valid
         mask_bool = ~attend  # [num_seqs, max_query_len, aligned_max_seq_len]
 
         if aligned_max_query_len > max_query_len:
@@ -467,7 +466,7 @@ class SpyreAttentionMetadataBuilder(AttentionMetadataBuilder[SpyreAttentionMetad
 
         mask_additive = torch.where(
             mask_bool,
-            torch.tensor(-65504.0, dtype=self.model_dtype, device=device),
+            torch.tensor(torch.finfo(self.model_dtype).min, dtype=self.model_dtype, device=device),
             torch.tensor(0.0, dtype=self.model_dtype, device=device),
         )
 
@@ -648,10 +647,6 @@ class SpyreAttentionImpl(AttentionImpl[SpyreAttentionMetadata]):
         self._attn_fns: dict[tuple[int, int], object] = {}
 
         logger.debug_once("Using SpyreAttentionBackend with LIST-BASED online softmax")
-
-        # sliding_window is handled by the metadata builder; validate but don't store
-        if sliding_window is not None and sliding_window <= 0:
-            raise ValueError(f"sliding_window must be positive, got {sliding_window}")
 
         if alibi_slopes is not None:
             raise NotImplementedError("ALiBi slopes not supported yet")
