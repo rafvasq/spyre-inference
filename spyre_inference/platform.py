@@ -65,6 +65,11 @@ class TorchSpyrePlatform(CpuPlatform):
     # DISTRIBUTED_BACKEND_NAME via `dist.Backend.register_backend`).
     dist_backend: str = "cpu:gloo,spyre:spyreccl"
 
+    # Hard caps for the on-device KV cache. Large batch volumes trigger
+    # `RAS::VFIO::MapDMAFailed` during `_initialize_kv_caches`.
+    MAX_MODEL_LEN_CAP: int = 128
+    MAX_NUM_SEQS_CAP: int = 8
+
     # Register the PyTorch Native Attention implementation as the CUSTOM backend.
     _backend_path = "spyre_inference.v1.attention.backends.spyre_attn.SpyreAttentionBackend"
     register_backend(AttentionBackendEnum.CUSTOM, _backend_path)
@@ -72,6 +77,13 @@ class TorchSpyrePlatform(CpuPlatform):
     @classmethod
     def get_device_name(cls, device_id: int = 0) -> str:
         return "torch-spyre"
+
+    @classmethod
+    def device_count(cls) -> int:
+        # CpuPlatform returns 1 (CPU = single device); for TP>1 we need the
+        # actual Spyre card count so upstream gates like
+        # `@multi_gpu_test(num_gpus=2)` don't skip on multi-card hosts.
+        return torch.spyre.device_count()
 
     @classmethod
     def log_server_boot(cls, vllm_config: VllmConfig) -> None:
@@ -152,6 +164,29 @@ class TorchSpyrePlatform(CpuPlatform):
                 f"The model dtype needs to be torch.float16 for spyre, "
                 f"but was specified to be {vllm_config.model_config.dtype}"
             )
+
+        # Clamp the user-facing KV-cache knobs so the auto-derived
+        # `num_gpu_blocks_override` below fits in Spyre's DMA region. Done
+        # before super() because CpuPlatform's logic also reads max_model_len.
+        model_config = vllm_config.model_config
+        if model_config.max_model_len > cls.MAX_MODEL_LEN_CAP:
+            logger.warning(
+                "Spyre's on-device KV cache cannot fit max_model_len=%d; "
+                "clamping to MAX_MODEL_LEN_CAP=%d.",
+                model_config.max_model_len,
+                cls.MAX_MODEL_LEN_CAP,
+            )
+            model_config.max_model_len = cls.MAX_MODEL_LEN_CAP
+
+        scheduler_config = vllm_config.scheduler_config
+        if scheduler_config.max_num_seqs > cls.MAX_NUM_SEQS_CAP:
+            logger.warning(
+                "Spyre's on-device KV cache cannot fit max_num_seqs=%d; "
+                "clamping to MAX_NUM_SEQS_CAP=%d.",
+                scheduler_config.max_num_seqs,
+                cls.MAX_NUM_SEQS_CAP,
+            )
+            scheduler_config.max_num_seqs = cls.MAX_NUM_SEQS_CAP
 
         # Override block_size to a multiple of 64 if the user didn't explicitly set it.
         # The list-based attention backend requires 64-element stick alignment for
