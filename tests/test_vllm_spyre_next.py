@@ -34,3 +34,21 @@ def test_basic_model_load():
     )
 
     assert len(output[0].outputs[0].text) > 0
+
+
+
+@pytest.mark.uses_subprocess
+def test_granite_4_1_3b():
+    model = LLM(
+        "ibm-granite/granite-4.1-3b",
+        max_model_len=128,
+        max_num_seqs=2,
+        attention_config=AttentionConfig(backend=AttentionBackendEnum["CUSTOM"]),
+    )
+
+    sampling_params = SamplingParams(max_tokens=5)
+    output: list[RequestOutput] = model.generate(
+        prompts="Hello, my name is", sampling_params=sampling_params
+    )
+
+    assert len(output[0].outputs[0].text) > 0
