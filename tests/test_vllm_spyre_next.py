@@ -36,7 +36,6 @@ def test_basic_model_load():
     assert len(output[0].outputs[0].text) > 0
 
 
-
 @pytest.mark.uses_subprocess
 def test_granite_4_1_3b():
     model = LLM(
